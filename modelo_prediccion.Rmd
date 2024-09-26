@@ -1,6 +1,6 @@
 ---
 title: "Modelo de Predicción"
-author: "Santiago Cabas"
+author: "Colombiana de Trasplantes"
 date: "2024-08-15"
 output: html_document
 ---
