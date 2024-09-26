@@ -1,0 +1,173 @@
+---
+title: "Modelo de Predicción"
+author: "Santiago Cabas"
+date: "2024-08-15"
+output: html_document
+---
+
+```{r}
+# Paso 1: Definición del Problema y Exploración de Datos
+# El objetivo del análisis es predecir si un paciente morirá antes de recibir un trasplante.
+# Se carga los datos directamente desde el repositorio de GitHub.
+url <- "https://raw.githubusercontent.com/ColTrasplantes/Prediccion/main/transplant.csv"
+transplant <- read.csv(url)
+
+# Se realiza una inspección inicial de los datos para entender su estructura y calidad.
+# Esto incluye un resumen estadístico y la estructura de las variables.
+summary(transplant)
+str(transplant)
+# Esta exploración es crucial para identificar valores faltantes, tipos de datos (numéricos o categóricos),
+# y detectar posibles anomalías en los datos.
+```
+
+```{r}
+# Paso 2: Codificación de los Predictores
+# Se convierten las variables categóricas en factores para que puedan ser procesadas por el modelo.
+transplant$sex <- as.factor(transplant$sex)
+transplant$abo <- as.factor(transplant$abo)
+transplant$event <- as.factor(transplant$event)
+
+# Se recodifica la variable de resultado ('event') para que sea binaria:
+# 1 si el paciente murió antes del trasplante, 0 si fue trasplantado o censurado.
+transplant$event_binary <- ifelse(transplant$event == "death", 1, 0)
+# Este paso asegura que la variable de resultado esté en un formato adecuado para el análisis de regresión logística.
+```
+
+
+```{r}
+# Paso 3: Especificación del Modelo
+# Se define un modelo de regresión logística para predecir la probabilidad de muerte antes del trasplante.
+# Se seleccionan las variables predictoras relevantes: edad, sexo, tipo de sangre (ABO), y tiempo en la lista de espera.
+modelo_logistico <- glm(event_binary ~ age + sex + abo + futime, 
+                        data = transplant, 
+                        family = binomial)
+# Este modelo es adecuado para predecir resultados binarios (muerte sí/no).
+# La especificación cuidadosa del modelo ayuda a evitar el sobreajuste y a utilizar predictores relevantes.
+```
+
+
+```{r}
+# Paso 4: Estimación del Modelo
+# Se estiman los coeficientes del modelo utilizando máxima verosimilitud y se revisa el resumen del modelo.
+summary(modelo_logistico)
+# El resumen del modelo muestra:
+# - Coeficientes: indican la dirección y magnitud del efecto de cada predictor en la variable de resultado.
+# - Valores p: indican si el efecto del predictor es estadísticamente significativo.
+# Un coeficiente positivo sugiere que un aumento en el predictor incrementa la probabilidad de muerte antes del trasplante.
+```
+
+
+```{r}
+# Paso 5: Evaluación del Rendimiento del Modelo
+# Se evalúa el rendimiento del modelo utilizando la curva ROC y el AUC para medir la capacidad discriminativa del modelo.
+transplant <- na.omit(transplant)  # Se eliminan valores faltantes para evitar errores en las predicciones
+predicciones <- predict(modelo_logistico, type = "response")
+
+# Se calcula la curva ROC y el AUC.
+library(pROC)
+roc_curve <- roc(transplant$event_binary, predicciones)
+auc_valor <- auc(roc_curve)
+auc_valor
+# La curva ROC permite evaluar cómo de bien el modelo discrimina entre pacientes que murieron y los que no.
+# Un AUC cercano a 1 indica una excelente discriminación; un AUC de 0.5 sugiere que el modelo no es mejor que el azar.
+
+# Se evalúa la calibración del modelo utilizando el test de Hosmer-Lemeshow.
+library(ResourceSelection)
+hoslem_test <- hoslem.test(transplant$event_binary, fitted(modelo_logistico))
+hoslem_test
+# Un p-valor alto en el test de Hosmer-Lemeshow (>0.05) indica que el modelo está bien calibrado,
+# lo que significa que las predicciones del modelo se alinean bien con las observaciones reales.
+```
+
+```{r}
+# Paso 6: Validación Interna
+# Se realiza una validación cruzada para evaluar la estabilidad del modelo y su capacidad de generalización.
+library(boot)
+set.seed(123)
+cv_error <- cv.glm(transplant, modelo_logistico, K=10)$delta[1]
+cv_error
+# Un error de validación cruzada bajo sugiere que el modelo es robusto y generaliza bien a nuevos datos.
+# Este resultado complementa las métricas de rendimiento como el AUC y la calibración.
+```
+
+
+```{r}
+# Paso 7: Presentación del Modelo
+# Se presenta el modelo de manera visual para facilitar su interpretación clínica.
+
+# Se grafica la curva ROC para visualizar la capacidad discriminativa del modelo.
+plot(roc_curve, main=sprintf("Curva ROC del Modelo (AUC = %.2f)", auc_valor))
+# Una curva ROC que se acerca al vértice superior izquierdo indica una buena capacidad discriminativa.
+
+# Se crea una curva de calibración para evaluar cómo se alinean las predicciones del modelo con las observaciones reales.
+# Se dividen las predicciones en deciles para comparar el riesgo predicho con la proporción observada de eventos.
+transplant$deciles <- cut(predicciones, breaks = quantile(predicciones, probs = seq(0, 1, 0.1)), include.lowest = TRUE)
+observed <- tapply(transplant$event_binary, transplant$deciles, mean)
+predicted <- tapply(predicciones, transplant$deciles, mean)
+
+# Se grafica la curva de calibración.
+plot(predicted, observed, 
+     xlab = "Riesgo Predicho", 
+     ylab = "Proporción Observada", 
+     main = "Curva de Calibración")
+abline(0, 1, col = "red")
+# Los puntos cercanos a la línea diagonal en la curva de calibración indican que el modelo está bien calibrado.
+# Una desviación significativa de la línea diagonal sugiere que el modelo podría estar sesgado.
+```
+
+
+```{r}
+# Paso 8: Validación Externa
+# Supongamos que tenemos un nuevo conjunto de datos llamado "external_data.csv"
+# external_data <- read.csv("external_data.csv")
+
+# Aseguramos que las variables categóricas en el nuevo conjunto de datos coincidan con las del conjunto de datos original.
+# external_data$sex <- factor(external_data$sex, levels = levels(transplant$sex))
+# external_data$abo <- factor(external_data$abo, levels = levels(transplant$abo))
+
+# Realizamos predicciones en el nuevo conjunto de datos utilizando el modelo previamente entrenado.
+# predicciones_externas <- predict(modelo_logistico, newdata = external_data, type = "response")
+
+# Evaluamos el rendimiento del modelo en el conjunto de datos externo.
+# roc_externa <- roc(external_data$event_binary, predicciones_externas)
+# auc_externa <- auc(roc_externa)
+# cat("AUC en datos externos:", auc_externa, "\n")
+
+# También evaluamos la calibración utilizando el test de Hosmer-Lemeshow.
+# hoslem_test_externa <- hoslem.test(external_data$event_binary, predicciones_externas)
+# cat("P-valor del test de Hosmer-Lemeshow en datos externos:", hoslem_test_externa$p.value, "\n")
+
+```
+
+
+```{r}
+# Paso 9: Uso del Modelo de Predicción
+# Ahora que el modelo ha sido validado internamente, se usa para hacer predicciones con nuevos datos.
+
+# Se crea un nuevo paciente con las siguientes características:
+# age: 50, sex: "m", abo: "O", futime: 365 (tiempo en lista de espera en días)
+nuevo_paciente <- data.frame(age = 50, 
+                             sex = factor("m", levels = levels(transplant$sex)), 
+                             abo = factor("O", levels = levels(transplant$abo)), 
+                             futime = 365)
+
+# Se verifica la consistencia de los niveles de los factores en el nuevo paciente.
+str(nuevo_paciente)
+
+# Se realiza la predicción utilizando el modelo logístico.
+prediccion_nuevo <- predict(modelo_logistico, newdata = nuevo_paciente, type = "response")
+prediccion_nuevo
+# La predicción proporciona la probabilidad de que el paciente muera antes de recibir un trasplante.
+
+# Interpretación de la Predicción
+# Se convierte la probabilidad en un porcentaje para facilitar su interpretación.
+probabilidad_muerte <- round(prediccion_nuevo * 100, 2)
+
+# Se muestra la probabilidad con una interpretación clara.
+cat("La probabilidad predicha de que el paciente muera antes del trasplante es:", probabilidad_muerte, "%.\n")
+# Interpretación práctica:
+# - Si la probabilidad es alta (>50%), el paciente está en alto riesgo de morir antes del trasplante,
+#   lo que sugiere la necesidad de priorizar su caso.
+# - Si la probabilidad es baja, el paciente tiene una mayor probabilidad de recibir el trasplante a tiempo.
+```
+
